@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
@@ -14,6 +15,7 @@ func newLevelDBStore(path string) Store {
 	// use 1 gb block cache
 	db, err := leveldb.OpenFile(path, &opt.Options{
 		BlockCacheCapacity: 1 * opt.GiB,
+		Filter:             filter.NewBloomFilter(10),
 	})
 	if err != nil {
 		panic(err)

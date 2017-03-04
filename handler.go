@@ -85,16 +85,13 @@ func (hdlr LikeHandler) doLike(w http.ResponseWriter, oid, uid uint64) error {
 	if err != nil {
 		return err
 	}
-	// get user info
-	umap := make(map[string]string)
-	var keys []string
-	for _, uid := range uidList {
-		keys = append(keys, fmt.Sprintf("%c%s", Prefix_UserInfo, uid))
-	}
 	// get nickname info
-	nickNames, err := hdlr.redisStore.MGet(keys...).Result()
-	for i, uid := range uidList {
-		umap[uid] = nickNames[i].(string)
+	var recentUserList []map[string]string
+	for _, uid := range uidList {
+		id, _ := strconv.ParseUint(uid, 10, 64)
+		recentUserList = append(recentUserList, map[string]string{
+			uid: nicknameMap[id],
+		})
 	}
 
 	// put like item async
@@ -107,7 +104,7 @@ func (hdlr LikeHandler) doLike(w http.ResponseWriter, oid, uid uint64) error {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"oid":       oid,
 		"uid":       uid,
-		"like_list": umap,
+		"like_list": recentUserList,
 	})
 
 	w.Write(payload)
@@ -133,12 +130,17 @@ func (hdlr LikeHandler) doIsLike(w http.ResponseWriter, oid, uid uint64) error {
 
 func (hdlr LikeHandler) doCount(w http.ResponseWriter, oid uint64) error {
 	// TODO: get cnt from redis
-	cnt := 1024
+	ck := genLikeCountKey(oid)
+	cnt, err := hdlr.redisStore.Get(ck).Int64()
+	if err != nil {
+		return err
+	}
 	// write payload
 	payload, _ := json.Marshal(map[string]interface{}{
 		"oid":   oid,
 		"count": cnt,
 	})
+
 	w.Write(payload)
 	return nil
 }
