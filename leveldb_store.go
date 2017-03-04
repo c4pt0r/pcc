@@ -14,7 +14,7 @@ type levelDBStore struct {
 func newLevelDBStore(path string) Store {
 	// use 1 gb block cache
 	db, err := leveldb.OpenFile(path, &opt.Options{
-		BlockCacheCapacity: 1 * opt.GiB,
+		BlockCacheCapacity: 10 * opt.GiB,
 		Filter:             filter.NewBloomFilter(10),
 	})
 	if err != nil {
@@ -25,14 +25,21 @@ func newLevelDBStore(path string) Store {
 	}
 }
 
-func (t *levelDBStore) Seek(keyPref []byte, batchSize int) []*KV {
-	iter := t.db.NewIterator(util.BytesPrefix(keyPref), nil)
+func (t *levelDBStore) Scan(start []byte, batchSize int, fnShouldStop func(k []byte) bool) []*KV {
+	iter := t.db.NewIterator(&util.Range{
+		Start: start,
+	}, nil)
 	cnt := 0
 	var res []*KV
 	for iter.Next() {
 		if !iter.Valid() {
 			break
 		}
+
+		if fnShouldStop(iter.Key()) {
+			break
+		}
+
 		res = append(res, &KV{
 			K: append([]byte{}, iter.Key()...),
 			V: append([]byte{}, iter.Value()...),

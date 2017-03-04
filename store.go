@@ -20,7 +20,7 @@ func (kv *KV) String() string {
 }
 
 type Store interface {
-	Seek(keyPrefix []byte, batchSize int) []*KV
+	Scan(start []byte, batchSize int, fnShouldStop func(k []byte) bool) []*KV
 	Exists(key []byte) bool
 	Put(kv *KV) error
 	Get(key []byte) *KV

@@ -7,9 +7,47 @@ import (
 	"strconv"
 	"strings"
 
+	redis "gopkg.in/redis.v5"
+
 	"github.com/ngaut/log"
 	"github.com/syndtr/goleveldb/leveldb"
 )
+
+// next returns the next key in byte-order.
+func next(b []byte) []byte {
+	// add 0x0 to the end of key
+	buf := make([]byte, len([]byte(b))+1)
+	copy(buf, []byte(b))
+	return buf
+}
+
+// PrefixNext returns the next prefix key.
+//
+// Assume there are keys like:
+//
+//   rowkey1
+//   rowkey1_column1
+//   rowkey1_column2
+//   rowKey2
+//
+// If we seek 'rowkey1' Next, we will get 'rowkey1_colum1'.
+// If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
+func prefixNext(k []byte) []byte {
+	buf := make([]byte, len([]byte(k)))
+	copy(buf, []byte(k))
+	var i int
+	for i = len(k) - 1; i >= 0; i-- {
+		buf[i]++
+		if buf[i] != 0 {
+			break
+		}
+	}
+	if i == -1 {
+		copy(buf, k)
+		buf = append(buf, 0)
+	}
+	return buf
+}
 
 func loadNickname(path string) {
 	log.Info("loading nicknames...")
@@ -72,8 +110,8 @@ func loadRelationship(storePath, relationFile string) {
 		uid1 := strings.TrimSpace(parts[0])
 		uid2 := strings.TrimSpace(parts[1])
 
-		key1 := fmt.Sprintf("%c%d/%d", Prefix_Rel, uid1, uid2)
-		key2 := fmt.Sprintf("%c%d/%d", Prefix_Rel, uid2, uid1)
+		key1 := fmt.Sprintf("%c%s/%s", Prefix_Rel, uid1, uid2)
+		key2 := fmt.Sprintf("%c%s/%s", Prefix_Rel, uid2, uid1)
 
 		// batch 2 key
 		b.Put([]byte(key1), nil)
@@ -95,7 +133,7 @@ func loadRelationship(storePath, relationFile string) {
 	levelDB.Close()
 }
 
-func loadLikes(storePath, likesFile string) {
+func loadLikes(redisAddr, storePath, likesFile string) {
 	log.Info("loading likes...")
 	levelDB := newLevelDBStore(storePath).(*levelDBStore)
 
@@ -105,6 +143,10 @@ func loadLikes(storePath, likesFile string) {
 	}
 	rdr := bufio.NewReader(fp)
 	cnt := 0
+
+	redisCli := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
 
 	b := &leveldb.Batch{}
 	for {
@@ -133,6 +175,7 @@ func loadLikes(storePath, likesFile string) {
 			if len(uid) == 0 {
 				continue
 			}
+
 			log.Debug("writing", oid, uid)
 			b.Put([]byte(fmt.Sprintf("%c%s/%s", Prefix_Like, oid, uid)), nil)
 			if b.Len() == 500 {
@@ -140,6 +183,9 @@ func loadLikes(storePath, likesFile string) {
 				b = &leveldb.Batch{}
 			}
 		}
+
+		// update like count
+		redisCli.IncrBy(fmt.Sprintf("%c%s", Prefix_ObjectLikeCnt, oid), int64(len(uidlist)))
 
 		if b.Len() > 0 {
 			levelDB.db.Write(b, nil)

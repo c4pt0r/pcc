@@ -1,12 +1,6 @@
 package main
 
-import (
-	"bytes"
-	"errors"
-
-	"github.com/google/btree"
-)
-
+/*
 type btreeStore struct {
 	tree *btree.BTree
 }
@@ -21,7 +15,7 @@ func newBtreeStore() Store {
 	}
 }
 
-func (t *btreeStore) Seek(keyPref []byte, batchSize int) []*KV {
+func (t *btreeStore) Scan(keyPref []byte, batchSize int) []*KV {
 	var res []*KV
 	i := 0
 	t.tree.AscendGreaterOrEqual(&KV{K: keyPref}, func(kv btree.Item) bool {
@@ -52,3 +46,4 @@ func (t *btreeStore) Get(key []byte) *KV {
 	}
 	return nil
 }
+*/

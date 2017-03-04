@@ -24,23 +24,22 @@ func main() {
 	flag.Parse()
 	log.SetLevelByString(*logLevel)
 
-	loadNickname(*flagNicknames)
-
 	if len(*flagLoadRelationship) > 0 {
 		loadRelationship(*flagStorePath, *flagLoadRelationship)
 		return
 	}
 
 	if len(*flagLoadLikes) > 0 {
-		loadLikes(*flagStorePath, *flagLoadLikes)
+		loadLikes(*flagRedisAddr, *flagStorePath, *flagLoadLikes)
 		return
 	}
 
 	// launch server
+	loadNickname(*flagNicknames)
 	hdlr := LikeHandler{
 		localStore: newLevelDBStore(*flagStorePath),
 		redisStore: redis.NewClient(&redis.Options{
-			Addr: "localhost:6379",
+			Addr: *flagRedisAddr,
 		}),
 	}
 

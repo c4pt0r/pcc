@@ -1,14 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	redis "gopkg.in/redis.v5"
 )
@@ -24,29 +25,70 @@ func errResp(w io.Writer, code int, msg string, oid, uid uint64) {
 }
 
 type LikeHandler struct {
-	localStore Store
-	redisStore *redis.Client
+	localStore   Store
+	remoteStores Store
+	redisStore   *redis.Client
 }
 
-func (hdlr LikeHandler) doList(w http.ResponseWriter, oid, uid, cursor uint64, pageSize, isFriend int) error {
-	var prefix []byte
-	if cursor != 0 {
-		prefix = []byte(fmt.Sprintf("%c%d/%d", Prefix_Like, oid, cursor))
+func (hdlr LikeHandler) isFriend(uid1, uid2 uint64) bool {
+	key := fmt.Sprintf("%c%d/%d", Prefix_Rel, uid1, uid2)
+	if hdlr.localStore.Exists([]byte(key)) {
+		return true
+	}
+	return false
+}
+
+func (hdlr LikeHandler) doList(w http.ResponseWriter, oid, uid uint64, cursor string, pageSize, needFriend int) error {
+	var start, prefix []byte
+	prefix = []byte(fmt.Sprintf("%c%d/", Prefix_Like, oid))
+
+	if len(cursor) > 0 {
+		start = []byte(cursor)
 	} else {
-		prefix = []byte(fmt.Sprintf("%c%d/", Prefix_Like, oid))
+		start = prefix
 	}
 
-	if isFriend == 0 {
-		// batch size
-		batchSize := 20
-		if pageSize < batchSize {
-			batchSize = pageSize
-			kvs := hdlr.localStore.Seek(prefix, batchSize)
-			for _, kv := range kvs {
-				log.Println(kv)
+	// default batch size
+	var res []uint64
+	var lastKey []byte
+L:
+	for len(res) < pageSize {
+		kvs := hdlr.localStore.Scan(start, 20, func(k []byte) bool {
+			return !bytes.HasPrefix(k, prefix)
+		})
+		// no such object
+		if len(kvs) == 0 {
+			break L
+		}
+		// get uid
+		for _, kv := range kvs {
+			s := strings.Split(string(kv.K), "/")[1]
+			r, _ := strconv.ParseUint(s, 10, 64)
+			if needFriend == 0 || (needFriend == 1 && hdlr.isFriend(uid, r)) {
+				res = append(res, r)
+			}
+			lastKey = kv.K
+			if len(res) == pageSize {
+				break L
 			}
 		}
+		// update prefix
+		start = next(lastKey)
 	}
+
+	var list []map[uint64]string
+	for _, uid := range res {
+		list = append(list, map[uint64]string{
+			uid: nicknameMap[uid],
+		})
+	}
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"oid":       oid,
+		"like_list": list,
+		"cursor":    string(lastKey),
+	})
+	w.Write(payload)
 	return nil
 }
 
@@ -94,11 +136,10 @@ func (hdlr LikeHandler) doLike(w http.ResponseWriter, oid, uid uint64) error {
 		})
 	}
 
-	// put like item async
-	// TODO: sync to another nodes(async)
-	if err := hdlr.localStore.Put(&KV{K: []byte(key)}); err != nil {
-		return err
-	}
+	// async
+	go func() {
+		hdlr.localStore.Put(&KV{K: []byte(key)})
+	}()
 
 	// write response
 	payload, _ := json.Marshal(map[string]interface{}{
@@ -112,7 +153,6 @@ func (hdlr LikeHandler) doLike(w http.ResponseWriter, oid, uid uint64) error {
 }
 
 func (hdlr LikeHandler) doIsLike(w http.ResponseWriter, oid, uid uint64) error {
-	// TODO: load from LRU cache?
 	key := []byte(fmt.Sprintf("%c%d/%d", Prefix_Like, oid, uid))
 	m := map[string]interface{}{
 		"oid": oid,
@@ -129,7 +169,6 @@ func (hdlr LikeHandler) doIsLike(w http.ResponseWriter, oid, uid uint64) error {
 }
 
 func (hdlr LikeHandler) doCount(w http.ResponseWriter, oid uint64) error {
-	// TODO: get cnt from redis
 	ck := genLikeCountKey(oid)
 	cnt, err := hdlr.redisStore.Get(ck).Int64()
 	if err != nil {
@@ -182,7 +221,7 @@ func (hdlr LikeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "list":
-		cursor, _ := strconv.ParseUint(m.Get("cursor"), 10, 64)
+		cursor := m.Get("cursor")
 		isFriend, _ := strconv.Atoi(m.Get("is_friend"))
 		pageSize, _ := strconv.Atoi(m.Get("page_size"))
 		if pageSize == 0 {
