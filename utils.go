@@ -82,7 +82,26 @@ func loadNickname(path string) {
 	log.Info("done", cnt)
 }
 
-func loadRelationship(storePath, relationFile string) {
+func skipNLines(rdr *bufio.Reader, n int) error {
+	cnt := 0
+	for cnt < n {
+		var prefix bool
+		var err error
+		for {
+			_, prefix, err = rdr.ReadLine()
+			if prefix == false {
+				break
+			}
+		}
+		if err != nil {
+			return err
+		}
+		cnt++
+	}
+	return nil
+}
+
+func loadRelationship(storePath, relationFile string, skip int) {
 	log.Info("loading user relations...")
 	levelDB := newLevelDBStore(storePath).(*levelDBStore)
 
@@ -90,9 +109,12 @@ func loadRelationship(storePath, relationFile string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rdr := bufio.NewReader(fp)
-	cnt := 0
 
+	rdr := bufio.NewReader(fp)
+	if skip > 0 {
+		skipNLines(rdr, skip)
+	}
+	cnt := skip
 	b := &leveldb.Batch{}
 	for {
 		l, _, err := rdr.ReadLine()
@@ -118,7 +140,7 @@ func loadRelationship(storePath, relationFile string) {
 		b.Put([]byte(key2), nil)
 
 		cnt++
-		if b.Len() == 500 {
+		if b.Len() == 100000 {
 			log.Info("loading...", cnt)
 			levelDB.db.Write(b, nil)
 			b = &leveldb.Batch{}
@@ -133,7 +155,7 @@ func loadRelationship(storePath, relationFile string) {
 	levelDB.Close()
 }
 
-func loadLikes(redisAddr, storePath, likesFile string) {
+func loadLikes(redisAddr, storePath, likesFile string, skip int) {
 	log.Info("loading likes...")
 	levelDB := newLevelDBStore(storePath).(*levelDBStore)
 
@@ -141,8 +163,12 @@ func loadLikes(redisAddr, storePath, likesFile string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	rdr := bufio.NewReader(fp)
-	cnt := 0
+	if skip > 0 {
+		skipNLines(rdr, skip)
+	}
+	cnt := skip
 
 	redisCli := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -150,7 +176,16 @@ func loadLikes(redisAddr, storePath, likesFile string) {
 
 	b := &leveldb.Batch{}
 	for {
-		l, _, err := rdr.ReadLine()
+		var l, tmp []byte
+		var prefix bool
+		var err error
+		for {
+			tmp, prefix, err = rdr.ReadLine()
+			l = append(l, tmp...)
+			if prefix == false {
+				break
+			}
+		}
 		if err != nil {
 			break
 		}
@@ -159,7 +194,6 @@ func loadLikes(redisAddr, storePath, likesFile string) {
 		if len(ll) == 0 {
 			continue
 		}
-		//
 
 		parts := strings.Split(ll, ":")
 		oid := strings.TrimSpace(parts[0])
@@ -178,7 +212,7 @@ func loadLikes(redisAddr, storePath, likesFile string) {
 
 			log.Debug("writing", oid, uid)
 			b.Put([]byte(fmt.Sprintf("%c%s/%s", Prefix_Like, oid, uid)), nil)
-			if b.Len() == 500 {
+			if b.Len() == 50000 {
 				levelDB.db.Write(b, nil)
 				b = &leveldb.Batch{}
 			}

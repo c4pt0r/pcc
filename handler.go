@@ -43,7 +43,7 @@ func (hdlr LikeHandler) doList(w http.ResponseWriter, oid, uid uint64, cursor st
 	prefix = []byte(fmt.Sprintf("%c%d/", Prefix_Like, oid))
 
 	if len(cursor) > 0 {
-		start = []byte(cursor)
+		start = next([]byte(cursor))
 	} else {
 		start = prefix
 	}
@@ -136,9 +136,10 @@ func (hdlr LikeHandler) doLike(w http.ResponseWriter, oid, uid uint64) error {
 		})
 	}
 
-	// async
+	// async persist to disk
 	go func() {
 		hdlr.localStore.Put(&KV{K: []byte(key)})
+		hdlr.remoteStores.Put(&KV{K: []byte(key)})
 	}()
 
 	// write response
